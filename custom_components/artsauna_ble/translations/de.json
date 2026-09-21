@@ -9,14 +9,14 @@
       }
     },
     "error": {
-      "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
-      "unknown": "[%key:common::config_flow::error::unknown%]"
+      "cannot_connect": "Verbindung fehlgeschlagen",
+      "unknown": "Unerwarteter Fehler"
     },
     "abort": {
       "not_supported": "Gerät nicht unterstützt",
-      "already_in_progress": "[%key:common::config_flow::abort::already_in_progress%]",
-      "already_configured": "[%key:common::config_flow::abort::already_configured_device%]",
-      "no_devices_found": "[%key:common::config_flow::abort::no_devices_found%]"
+      "already_in_progress": "Einrichtung läuft bereits",
+      "already_configured": "Gerät ist bereits konfiguriert",
+      "no_devices_found": "Keine Geräte gefunden"
     }
   },
   "entity": {
