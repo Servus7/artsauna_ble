@@ -34,9 +34,22 @@ from homeassistant.components.bluetooth import (
 from homeassistant.const import CONF_ADDRESS
 
 from .artsauna_ble import ArtsaunaBLEAdapter
-from .const import DOMAIN
+from .const import (
+    CONF_DEVICE_TYPE,
+    DEVICE_TYPE_KDY,
+    DOMAIN,
+    device_type_for_name,
+)
+from .kdy_ble import KdyBLEAdapter
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _create_adapter(discovery_info: BluetoothServiceInfoBleak):
+    """Create the protocol adapter for a discovery result."""
+    if device_type_for_name(discovery_info.name) == DEVICE_TYPE_KDY:
+        return KdyBLEAdapter(discovery_info.device)
+    return ArtsaunaBLEAdapter(discovery_info.device)
 
 
 class ArtsaunaBLEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -73,24 +86,26 @@ class ArtsaunaBLEConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             address = user_input[CONF_ADDRESS]
             discovery_info = self._discovered_devices[address]
             local_name = discovery_info.name
+            device_type = device_type_for_name(local_name)
             await self.async_set_unique_id(
                 discovery_info.address, raise_on_progress=False
             )
             self._abort_if_unique_id_configured()
-            artsauna_ble = ArtsaunaBLEAdapter(discovery_info.device)
+            adapter = _create_adapter(discovery_info)
             try:
-                await artsauna_ble.initialise()
+                await adapter.initialise()
             except BLEAK_EXCEPTIONS:
                 errors["base"] = "cannot_connect"
             except Exception:  # pylint: disable=broad-except
                 _LOGGER.exception("Unexpected error")
                 errors["base"] = "unknown"
             else:
-                await artsauna_ble.stop()
+                await adapter.stop()
                 return self.async_create_entry(
                     title=local_name,
                     data={
                         CONF_ADDRESS: discovery_info.address,
+                        CONF_DEVICE_TYPE: device_type,
                     },
                 )
 

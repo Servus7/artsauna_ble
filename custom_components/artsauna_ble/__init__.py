@@ -20,6 +20,7 @@
 
 import logging
 
+from bleak.backends.device import BLEDevice
 from bleak.exc import BleakError
 from bleak_retry_connector import (
     close_stale_connections_by_address,
@@ -33,8 +34,15 @@ from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryNotReady
 
 from .artsauna_ble import ArtsaunaBLEAdapter
-from .const import DOMAIN
+from .const import (
+    CONF_DEVICE_TYPE,
+    DEVICE_TYPE_ARTSAUNA,
+    DEVICE_TYPE_KDY,
+    DOMAIN,
+    device_type_for_name,
+)
 from .coordinator import ArtsaunaBLECoordinator
+from .kdy_ble import KdyBLEAdapter
 from .models import ArtsaunaBLEData
 
 PLATFORMS: list[Platform] = [
@@ -48,6 +56,23 @@ PLATFORMS: list[Platform] = [
 _LOGGER = logging.getLogger(__name__)
 
 
+def _resolve_device_type(entry: ConfigEntry, ble_device: BLEDevice) -> str:
+    """Resolve device type from entry data, falling back to advertised name."""
+    stored = entry.data.get(CONF_DEVICE_TYPE)
+    if stored in (DEVICE_TYPE_ARTSAUNA, DEVICE_TYPE_KDY):
+        return stored
+    return device_type_for_name(ble_device.name)
+
+
+def _create_adapter(
+    ble_device: BLEDevice, device_type: str
+) -> ArtsaunaBLEAdapter | KdyBLEAdapter:
+    """Create the protocol adapter for this config entry."""
+    if device_type == DEVICE_TYPE_KDY:
+        return KdyBLEAdapter(ble_device)
+    return ArtsaunaBLEAdapter(ble_device)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Artsauna BLE from a config entry."""
     address: str = entry.data[CONF_ADDRESS]
@@ -59,18 +84,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     ) or await get_device(address)
     if not ble_device:
         raise ConfigEntryNotReady(
-            f"Could not find Artsauna device with address {address}"
+            f"Could not find sauna device with address {address}"
         )
 
-    artsauna_ble = ArtsaunaBLEAdapter(ble_device)
+    device_type = _resolve_device_type(entry, ble_device)
+    device = _create_adapter(ble_device, device_type)
 
-    coordinator = ArtsaunaBLECoordinator(hass, artsauna_ble)
+    coordinator = ArtsaunaBLECoordinator(hass, device)
 
     try:
-        await artsauna_ble.initialise()
+        await device.initialise()
     except BleakError as exc:
         raise ConfigEntryNotReady(
-            f"Could not initialise Artsauna device with address {address}"
+            f"Could not initialise sauna device with address {address}"
         ) from exc
 
     @callback
@@ -79,7 +105,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         change: bluetooth.BluetoothChange,
     ) -> None:
         """Update from a ble callback."""
-        artsauna_ble.set_ble_device_and_advertisement_data(
+        device.set_ble_device_and_advertisement_data(
             service_info.device, service_info.advertisement
         )
 
@@ -93,7 +119,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = ArtsaunaBLEData(
-        entry.title, artsauna_ble, coordinator
+        entry.title, device, coordinator
     )
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -101,7 +127,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     async def _async_stop(event: Event) -> None:
         """Close the connection."""
-        await artsauna_ble.stop()
+        await device.stop()
 
     entry.async_on_unload(
         hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _async_stop)

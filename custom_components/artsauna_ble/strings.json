@@ -83,6 +83,9 @@
       },
       "rgb_mode": {
         "name": "RGB Color Mode"
+      },
+      "power": {
+        "name": "Power"
       }
     }
   }

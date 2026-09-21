@@ -36,7 +36,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from propcache.api import cached_property
 
 from .artsauna_ble import ArtsaunaBLEAdapter
-from .const import DOMAIN
+from .const import CONF_DEVICE_TYPE, DEVICE_TYPE_ARTSAUNA, DEVICE_TYPE_KDY, DOMAIN
 from .coordinator import ArtsaunaBLECoordinator
 from .models import ArtsaunaBLEData
 
@@ -64,7 +64,12 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the platform for ArtsaunaBLE."""
+    if entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_ARTSAUNA) == DEVICE_TYPE_KDY:
+        # Commands are not verified for KDY yet — no numbers in phase 1
+        return
+
     data: ArtsaunaBLEData = hass.data[DOMAIN][entry.entry_id]
+    assert isinstance(data.device, ArtsaunaBLEAdapter)
     async_add_entities(
         ArtsaunaBLENumber(
             data.coordinator,

@@ -5,13 +5,24 @@
 [![Downloads](https://img.shields.io/github/downloads/Dacid99/artsauna_ble/total)](https://github.com/Dacid99/artsauna_ble/releases)
 [![Translation status](https://hosted.weblate.org/widget/artsauna_ble/svg-badge.svg)](https://hosted.weblate.org/engage/artsauna_ble/)
 
-This free and open-source integration allows you to control your Artsauna Device via HomeAssistant.
+This free and open-source integration allows you to control your Artsauna Device via HomeAssistant, and to observe KDY Sauna devices over BLE.
 
 It has been developed for and tested with an Artsauna Infrared Cabin Type Oslo.
 
-The controller used is marked as CS-128 and is most likely manufactured by china-based HiMaterial. 
+The Artsauna controller used is marked as CS-128 and is most likely manufactured by china-based HiMaterial.
+
+KDY support was added for devices advertising as `KDYSauna-*` (tested against `KDYSauna-10`). The KDY protocol is still being reverse-engineered; only fields confirmed from hardware captures are exposed.
+
+## Supported devices
+
+| Brand / device | Discovery name | Status |
+| -------------- | -------------- | ------ |
+| Artsauna (HiMaterial CS-128) | `SAUNA*` | Full control (existing) |
+| KDY Sauna | `KDYSauna*` | Read-only status (phase 1) |
 
 ## Features
+
+### Artsauna
 
 You can control the Artsauna the same way the proprietary app would allow you to.
 
@@ -35,9 +46,32 @@ Buttons:
 Numbers:
 - Set audio volume
 
+### KDY Sauna (phase 1 — reverse engineering)
+
+KDY uses a different GATT layout (`FFF0` / `FFF1` / `FFF2` / `FFF3`) and a 22-byte `AA…CC` status frame on `FFF2`. The integration keeps a **single BLE connection** per device for status and notifications (commands will reuse that same connection once verified).
+
+| Function | Status |
+| -------- | ------ |
+| Device Discovery | known (`KDYSauna*`) |
+| BLE Connection | known (one shared connection) |
+| FFF1 Notify | known (RAW logged; not parsed) |
+| FFF2 Read/Notify | known (status frames) |
+| FFF3 Write | known UUID; unused (writes not verified) |
+| Power | observed (sensor, read-only) |
+| Temperature (actual / target) | observed (sensors; °C as raw byte) |
+| Timer (remaining minutes) | observed (sensor) |
+| Innenlicht | still to verify |
+| Außenlicht | still to verify |
+| RGB | still to verify |
+| Solltemperatur writes | still to verify |
+| Commands | still to verify — **not implemented** |
+
+Unknown status bytes are left undecoded. Enable debug logging for `custom_components.artsauna_ble.kdy_ble` to see RAW notification hex while reverse-engineering.
+
 ### Known quirks
 
-- None
+- KDY saunas typically allow only one BLE client at a time. Do not connect another app or tool while Home Assistant is connected.
+- None known for Artsauna beyond normal BLE range limits.
 
 *Please report if you find weird behaviour!*
 
@@ -47,7 +81,7 @@ Numbers:
 
 [![Add integration](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=artsauna_ble)
 
-or install manually on your server by running these commmands
+or install manually on your server by running these commands
 
 ```bash
 git clone https://github.com/dacid99/Artsauna-ble.git
@@ -62,14 +96,13 @@ You'd like to help with the translation of this project?
 
 You can do this by going to [Weblate](https://hosted.weblate.org/engage/artsauna_ble/) and add your language!
 
-[![Translation status](https://hosted.weblate.org/widget/artsauna_ble/multi-auto.
-svg)](https://hosted.weblate.org/engage/artsauna_ble/)
+[![Translation status](https://hosted.weblate.org/widget/artsauna_ble/multi-auto.svg)](https://hosted.weblate.org/engage/artsauna_ble/)
 
 ## Contributing
 
 If you encounter any issue with this integration please let us know via the issues section of this repo!
 
-We welcome pull requests, especially if they extend the number of Artsauna products that this integration can be used for!
+We welcome pull requests, especially if they extend the number of Artsauna or KDY products that this integration can be used for. For KDY protocol work, please include concrete captured packets before adding new field meanings or write commands.
 
 ## Thank-yous and References
 
@@ -79,7 +112,7 @@ We welcome pull requests, especially if they extend the number of Artsauna produ
 
 ## Disclaimer
 
-The developers of this integration are not affiliated with Artsauna or HiMaterial. 
-They have created the integration as open source in their spare time on the basis of publicly accessible information. 
-The use of the integration is at the user's own risk and responsibility. 
+The developers of this integration are not affiliated with Artsauna, HiMaterial, or KDY.
+They have created the integration as open source in their spare time on the basis of publicly accessible information.
+The use of the integration is at the user's own risk and responsibility.
 The developers are not liable for any damages arising from the use of the integration.
