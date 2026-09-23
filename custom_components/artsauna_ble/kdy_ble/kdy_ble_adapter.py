@@ -135,17 +135,16 @@ class KdyBLEAdapter:
         raw_hex = bytes(data).hex()
         _LOGGER.debug("%s: RAW notification %s: %s", self.name, label, raw_hex)
 
-        # Status frames are observed on FFF2; ignore non-status FFF1 noise for state
-        uuid_str = str(char_uuid).lower() if char_uuid else ""
-        if uuid_str and uuid_str != CHARACTERISTIC_FFF2.lower():
-            return
-
+        # Status frames have been observed on both FFF1 and FFF2 on real
+        # hardware; the AA...CC framing check below is what validates a
+        # payload as a genuine status packet, not the source characteristic.
         try:
             new_state = KdyState.from_ble_status(data)
         except InvalidStatusPacket:
             _LOGGER.debug(
-                "%s: Non-status or invalid FFF2 payload (kept as RAW only): %s",
+                "%s: Non-status or invalid %s payload (kept as RAW only): %s",
                 self.name,
+                label,
                 raw_hex,
             )
             return
