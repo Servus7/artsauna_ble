@@ -238,8 +238,18 @@ class KdyBLESensor(CoordinatorEntity[ArtsaunaBLECoordinator], SensorEntity):
                 self._attr_native_value = self._device.remaining_time
             case "target_temp":
                 self._attr_native_value = self._device.target_temp
+                self._sensor_option_unit_of_measurement = (
+                    UnitOfTemperature.CELSIUS
+                    if self._device.is_unit_celsius
+                    else UnitOfTemperature.FAHRENHEIT
+                )
             case "current_temp":
                 self._attr_native_value = self._device.current_temp
+                self._sensor_option_unit_of_measurement = (
+                    UnitOfTemperature.CELSIUS
+                    if self._device.is_unit_celsius
+                    else UnitOfTemperature.FAHRENHEIT
+                )
             case _:
                 _LOGGER.error("Wrong KEY for KDY sensor: %s", self._key)
                 return
@@ -253,5 +263,9 @@ class KdyBLESensor(CoordinatorEntity[ArtsaunaBLECoordinator], SensorEntity):
     @cached_property
     def native_unit_of_measurement(self) -> str | None:
         if self._key in ["current_temp", "target_temp"]:
-            return UnitOfTemperature.CELSIUS
+            return (
+                UnitOfTemperature.CELSIUS
+                if self._device.is_unit_celsius
+                else UnitOfTemperature.FAHRENHEIT
+            )
         return super().native_unit_of_measurement
