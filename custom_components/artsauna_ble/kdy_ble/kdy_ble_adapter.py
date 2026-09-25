@@ -31,7 +31,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from functools import cached_property
 
 from bleak.backends.device import BLEDevice
@@ -279,6 +279,57 @@ class KdyBLEAdapter:
 
     async def send_temp_down(self) -> None:
         await self._send_command(CMD_BYTE_TARGET_TEMP, CMD_VALUE_STEP_DOWN)
+
+    async def send_set_target_temp(self, target: int) -> None:
+        """Step target temp toward an absolute value (no absolute-set command exists)."""
+        await self._step_to_target(
+            lambda: self._state.target_temp,
+            self.send_temp_up,
+            self.send_temp_down,
+            target,
+        )
+
+    async def send_set_timer(self, target: int) -> None:
+        """Step the timer toward an absolute value (no absolute-set command exists)."""
+        await self._step_to_target(
+            lambda: self._state.remaining_minutes,
+            self.send_timer_up,
+            self.send_timer_down,
+            target,
+        )
+
+    async def _step_to_target(
+        self,
+        current_getter: Callable[[], int],
+        step_up: Callable[[], Awaitable[None]],
+        step_down: Callable[[], Awaitable[None]],
+        target: int,
+        step_delay: float = 0.4,
+        max_steps: int = 60,
+    ) -> None:
+        """Fake an absolute set by repeating relative step commands.
+
+        Step size per command is UNCONFIRMED (PROTOCOL.md). This re-reads
+        the status after every single step and stops as soon as the target
+        is reached/passed, or as soon as a step produces no observed change
+        (dropped/coalesced command), rather than blindly firing `target -
+        current` commands up front and risking overshoot.
+        """
+        for _ in range(max_steps):
+            current = current_getter()
+            if current == target:
+                return
+            await (step_up() if current < target else step_down())
+            await asyncio.sleep(step_delay)
+            new_current = current_getter()
+            if new_current == current:
+                _LOGGER.debug(
+                    "%s: no observed change after step command, stopping", self.name
+                )
+                return
+            if (current < target < new_current) or (new_current < target < current):
+                _LOGGER.debug("%s: overshot target while stepping", self.name)
+                return
 
     async def send_toggle_outside_light(self) -> None:
         await self._send_command(CMD_BYTE_OUTSIDE_LIGHT, CMD_VALUE_TOGGLE)

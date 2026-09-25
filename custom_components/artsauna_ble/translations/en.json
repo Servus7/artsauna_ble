@@ -75,6 +75,12 @@
     "number": {
       "volume": {
         "name": "Volume"
+      },
+      "target_temp": {
+        "name": "Target Temperature"
+      },
+      "remaining_time": {
+        "name": "Remaining Time"
       }
     },
     "sensor": {

@@ -27,7 +27,7 @@ from homeassistant.components.number import (
     NumberMode,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EntityCategory
+from homeassistant.const import EntityCategory, UnitOfTemperature, UnitOfTime
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -63,6 +63,29 @@ KDY_VOLUME_DESCRIPTION = NumberEntityDescription(
     native_max_value=20,
     native_step=1,
 )
+# EXPERIMENTAL — stepper concept, only wired up on this test branch.
+# There is no absolute-set command for these (PROTOCOL.md); the entity
+# fakes it by repeating relative up/down commands (see
+# KdyBLEAdapter._step_to_target). Not yet verified against real hardware.
+KDY_TARGET_TEMP_DESCRIPTION = NumberEntityDescription(
+    key="target_temp",
+    translation_key="target_temp",
+    icon="mdi:thermometer",
+    mode=NumberMode.BOX,
+    native_min_value=0,
+    native_max_value=250,
+    native_step=1,
+)
+KDY_TIMER_DESCRIPTION = NumberEntityDescription(
+    key="timer",
+    translation_key="remaining_time",
+    icon="mdi:timer-outline",
+    mode=NumberMode.BOX,
+    native_unit_of_measurement=UnitOfTime.MINUTES,
+    native_min_value=0,
+    native_max_value=180,
+    native_step=1,
+)
 
 SENSOR_DESCRIPTIONS = [
     VOLUME_DESCRIPTION,
@@ -70,6 +93,8 @@ SENSOR_DESCRIPTIONS = [
 
 KDY_SENSOR_DESCRIPTIONS = [
     KDY_VOLUME_DESCRIPTION,
+    KDY_TARGET_TEMP_DESCRIPTION,
+    KDY_TIMER_DESCRIPTION,
 ]
 
 
@@ -207,21 +232,49 @@ class KdyBLENumber(CoordinatorEntity[ArtsaunaBLECoordinator], NumberEntity):
         match self._key:
             case "volume":
                 self._attr_native_value = self._device.volume
+            case "target_temp":
+                self._attr_native_value = self._device.target_temp
+                self._sensor_option_unit_of_measurement = (
+                    UnitOfTemperature.CELSIUS
+                    if self._device.is_unit_celsius
+                    else UnitOfTemperature.FAHRENHEIT
+                )
+            case "timer":
+                self._attr_native_value = self._device.remaining_time
             case _:
                 _LOGGER.error("Wrong KEY for KDY number: %s", self._key)
         self.async_write_ha_state()
 
     async def async_set_native_value(self, value: float) -> None:
-        """Update the current value."""
+        """Update the current value.
+
+        EXPERIMENTAL for target_temp/timer: no absolute-set command exists,
+        so this fakes it via repeated relative step commands — see
+        KdyBLEAdapter._step_to_target.
+        """
         match self._key:
             case "volume":
                 await self._device.send_set_volume(int(value))
+            case "target_temp":
+                await self._device.send_set_target_temp(int(value))
+            case "timer":
+                await self._device.send_set_timer(int(value))
             case _:
                 _LOGGER.error("Wrong KEY for KDY number: %s", self._key)
 
     @property
     def available(self) -> bool:
         return super().available and self._device.is_power_on
+
+    @cached_property
+    def native_unit_of_measurement(self) -> str | None:
+        if self._key == "target_temp":
+            return (
+                UnitOfTemperature.CELSIUS
+                if self._device.is_unit_celsius
+                else UnitOfTemperature.FAHRENHEIT
+            )
+        return super().native_unit_of_measurement
 
     @cached_property
     def icon(self) -> str | None:

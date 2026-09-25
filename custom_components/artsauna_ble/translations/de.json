@@ -75,6 +75,12 @@
     "number": {
       "volume": {
         "name": "Lautstärke"
+      },
+      "target_temp": {
+        "name": "Zieltemperatur"
+      },
+      "remaining_time": {
+        "name": "Verbleibende Zeit"
       }
     },
     "sensor": {

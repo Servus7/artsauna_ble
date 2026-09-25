@@ -102,10 +102,9 @@ BUTTON_ENTITY_DESCRIPTIONS = [
 ]
 
 KDY_BUTTON_ENTITY_DESCRIPTIONS = [
-    TEMP_UP_DESCRIPTION,
-    TEMP_DOWN_DESCRIPTION,
-    TIME_UP_DESCRIPTION,
-    TIME_DOWN_DESCRIPTION,
+    # temp_up/temp_down/time_up/time_down moved to number.py on this
+    # branch as an experimental stepper — see KDY_TARGET_TEMP_DESCRIPTION
+    # / KDY_TIMER_DESCRIPTION.
     OUTSIDE_LIGHT_DESCRIPTION,
     INSIDE_LIGHT_DESCRIPTION,
     CYCLE_RGB_DESCRIPTION,
@@ -238,14 +237,6 @@ class KdyBLEButton(CoordinatorEntity[ArtsaunaBLECoordinator], ButtonEntity):
     async def async_press(self) -> None:
         """Handle the button press."""
         match self._key:
-            case "temp_up":
-                return await self._device.send_temp_up()
-            case "temp_down":
-                return await self._device.send_temp_down()
-            case "time_up":
-                return await self._device.send_timer_up()
-            case "time_down":
-                return await self._device.send_timer_down()
             case "outside_light":
                 return await self._device.send_toggle_outside_light()
             case "inside_light":
@@ -256,10 +247,3 @@ class KdyBLEButton(CoordinatorEntity[ArtsaunaBLECoordinator], ButtonEntity):
                 return await self._device.send_toggle_audio_source()
             case _:
                 _LOGGER.error("Wrong KEY for KDY button: %s", self._key)
-
-    @property
-    def available(self) -> bool:
-        match self._key:
-            case "temp_up" | "temp_down" | "time_up" | "time_down":
-                return super().available and self._device.is_power_on
-        return super().available
