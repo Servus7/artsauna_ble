@@ -8,12 +8,11 @@ load_kdy_module("const")  # models imports .const
 models = load_kdy_module("models")
 KdyState = models.KdyState
 InvalidStatusPacket = models.InvalidStatusPacket
+build_command_packet = models.build_command_packet
 
 # Real hardware capture from KDYSauna-10 (Artsauna_KDYSauna10_BLE-Protokoll.md):
 # power ON, 48 min remaining, 32 °C actual, 35 °C target
-CAPTURED_STATUS = bytes.fromhex(
-    "AA0130302023000000000000000000000100000000CC"
-)
+CAPTURED_STATUS = bytes.fromhex("AA0130302023000000000000000000000100000000CC")
 
 
 def test_parse_captured_status() -> None:
@@ -57,3 +56,44 @@ def test_format_known_fields_mentions_unknowns() -> None:
     assert "ON" in text
     assert "48" in text
     assert "unknown" in text.lower()
+
+
+def test_parse_captured_status_decodes_audio_and_unit_fields() -> None:
+    state = KdyState.from_ble_status(CAPTURED_STATUS)
+
+    assert state.volume == 0
+    assert state.fm_on is False
+    assert state.bt_on is False
+    assert state.usb_on is True  # byte 16 == 0x01 in this capture
+    assert state.unit_fahrenheit is False
+
+
+def test_build_command_packet_sets_single_byte() -> None:
+    packet = build_command_packet(1, 1)
+
+    assert len(packet) == 22
+    assert packet[0] == 0xAA
+    assert packet[-1] == 0xCC
+    assert packet[1] == 1
+    assert all(b == 0 for i, b in enumerate(packet) if i not in (0, 1, 21))
+
+
+def test_build_command_packet_volume_absolute_value() -> None:
+    packet = build_command_packet(13, 20)
+
+    assert packet[13] == 20
+    assert packet.hex() == build_command_packet(13, 20).hex()
+
+
+def test_build_command_packet_rejects_out_of_range_index() -> None:
+    with pytest.raises(ValueError):
+        build_command_packet(0, 1)
+    with pytest.raises(ValueError):
+        build_command_packet(21, 1)
+
+
+def test_build_command_packet_rejects_out_of_range_value() -> None:
+    with pytest.raises(ValueError):
+        build_command_packet(1, -1)
+    with pytest.raises(ValueError):
+        build_command_packet(1, 256)

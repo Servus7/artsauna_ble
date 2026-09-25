@@ -27,10 +27,18 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .const import (
+    COMMAND_END,
+    COMMAND_PACKET_LENGTH,
+    COMMAND_START,
+    OFFSET_BT_ON,
     OFFSET_CURRENT_TEMP,
+    OFFSET_FM_ON,
     OFFSET_POWER,
     OFFSET_REMAINING_MINUTES,
     OFFSET_TARGET_TEMP,
+    OFFSET_UNIT_FAHRENHEIT,
+    OFFSET_USB_ON,
+    OFFSET_VOLUME,
     STATUS_END,
     STATUS_PACKET_LENGTH,
     STATUS_START,
@@ -41,18 +49,41 @@ class InvalidStatusPacket(ValueError):
     """Raised when a payload is not a valid 22-byte AA…CC status frame."""
 
 
+def build_command_packet(byte_index: int, value: int) -> bytes:
+    """Build a 22-byte AA…CC command packet with exactly one byte set.
+
+    Mirrors the decompiled app's ``d(byte value, int index)`` write helper:
+    all bytes zero except framing and the single target byte.
+    """
+    if not 1 <= byte_index <= COMMAND_PACKET_LENGTH - 2:
+        raise ValueError(f"byte_index {byte_index} out of range")
+    if not 0 <= value <= 0xFF:
+        raise ValueError(f"value {value} out of range")
+
+    packet = bytearray(COMMAND_PACKET_LENGTH)
+    packet[0] = COMMAND_START
+    packet[byte_index] = value
+    packet[-1] = COMMAND_END
+    return bytes(packet)
+
+
 @dataclass(frozen=True)
 class KdyState:
     """Decoded KDY status.
 
     Fields other than ``raw`` are only set from observed offsets.
-    Bytes 6–20 are intentionally not exposed as named fields (unknown).
+    Bytes 6–12, 19–20 are intentionally not exposed as named fields (unknown).
     """
 
     power: bool = False  # observed — byte 1
     remaining_minutes: int = 0  # observed — bytes 2–3
     current_temp: int = 0  # observed — byte 4 (°C)
     target_temp: int = 0  # observed — byte 5 (°C)
+    volume: int = 0  # observed — byte 13
+    fm_on: bool = False  # observed — byte 14
+    bt_on: bool = False  # observed — byte 15
+    usb_on: bool = False  # observed — byte 16
+    unit_fahrenheit: bool = False  # observed — byte 18
     raw: bytes = field(default_factory=bytes)  # verified — full notification payload
 
     @staticmethod
@@ -85,6 +116,11 @@ class KdyState:
             remaining_minutes=remaining,
             current_temp=payload[OFFSET_CURRENT_TEMP],
             target_temp=payload[OFFSET_TARGET_TEMP],
+            volume=payload[OFFSET_VOLUME],
+            fm_on=payload[OFFSET_FM_ON] != 0,
+            bt_on=payload[OFFSET_BT_ON] != 0,
+            usb_on=payload[OFFSET_USB_ON] != 0,
+            unit_fahrenheit=payload[OFFSET_UNIT_FAHRENHEIT] != 0,
             raw=payload,
         )
 
@@ -95,5 +131,10 @@ class KdyState:
             f"Remaining: {self.remaining_minutes} min; "
             f"Current: {self.current_temp} °C; "
             f"Target: {self.target_temp} °C; "
-            f"Timer/Light/RGB: unknown"
+            f"Volume: {self.volume}; "
+            f"FM: {'ON' if self.fm_on else 'OFF'}; "
+            f"BT: {'ON' if self.bt_on else 'OFF'}; "
+            f"USB: {'ON' if self.usb_on else 'OFF'}; "
+            f"Unit: {'F' if self.unit_fahrenheit else 'C'}; "
+            f"Light/RGB: unknown"
         )

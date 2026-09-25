@@ -18,36 +18,58 @@
 
 """Single-connection KDY Sauna BLE adapter.
 
-All status notifications and future commands must use this one Bleak client.
-Phase 1: notify/read only — no write payloads.
+All status notifications and commands use this one Bleak client. Commands
+are sent as write-without-response on FFF1, one byte at a time, per
+PROTOCOL.md. They are reverse-engineered from the decompiled app and have
+not been verified against real hardware yet — see PROTOCOL.md safety notes,
+in particular that power has no explicit OFF and must be gated on the
+current status.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 from collections.abc import Callable
 from functools import cached_property
 
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
-from bleak.exc import BleakError
+from bleak.exc import BleakDBusError, BleakError
 from bleak_retry_connector import (
+    BLEAK_RETRY_EXCEPTIONS,
     BleakClientWithServiceCache,
     BleakNotFoundError,
     establish_connection,
+    retry_bluetooth_connection_error,
 )
 from homeassistant.helpers.device_registry import format_mac
 
 from .const import (
     CHARACTERISTIC_FFF1,
     CHARACTERISTIC_FFF2,
+    CMD_BYTE_BT,
+    CMD_BYTE_FM,
+    CMD_BYTE_INSIDE_LIGHT,
+    CMD_BYTE_OUTSIDE_LIGHT,
+    CMD_BYTE_POWER,
+    CMD_BYTE_RGB,
+    CMD_BYTE_TARGET_TEMP,
+    CMD_BYTE_TIMER,
+    CMD_BYTE_UNIT,
+    CMD_BYTE_USB,
+    CMD_BYTE_VOLUME,
+    CMD_VALUE_STEP_DOWN,
+    CMD_VALUE_STEP_UP,
+    CMD_VALUE_TOGGLE,
     short_uuid,
 )
-from .models import InvalidStatusPacket, KdyState
+from .models import InvalidStatusPacket, KdyState, build_command_packet
 
 _LOGGER = logging.getLogger(__name__)
 BLEAK_BACKOFF_TIME = 0.25
+DEFAULT_ATTEMPTS = sys.maxsize
 
 
 class KdyBLEAdapter:
@@ -59,6 +81,7 @@ class KdyBLEAdapter:
         self._state = KdyState()
         self._client: BleakClientWithServiceCache | None = None
         self._connect_lock = asyncio.Lock()
+        self._operation_lock = asyncio.Lock()
         self._callbacks: list[Callable[[KdyState], None]] = []
         self._disconnected_callbacks: list[Callable[[], None]] = []
         self._expected_disconnect = False
@@ -94,9 +117,24 @@ class KdyBLEAdapter:
         return self._state.remaining_minutes
 
     @property
+    def volume(self) -> int:
+        return self._state.volume
+
+    @property
+    def is_fm_on(self) -> bool:
+        return self._state.fm_on
+
+    @property
+    def is_bt_on(self) -> bool:
+        return self._state.bt_on
+
+    @property
+    def is_usb_on(self) -> bool:
+        return self._state.usb_on
+
+    @property
     def is_unit_celsius(self) -> bool:
-        # observed temps are °C as raw bytes; °F encoding is unknown
-        return True
+        return not self._state.unit_fahrenheit
 
     async def initialise(self) -> None:
         """Connect and subscribe to notifications on the shared client."""
@@ -107,9 +145,7 @@ class KdyBLEAdapter:
             return
 
         _LOGGER.debug("%s: Subscribe to FFF2 status notifications", self.name)
-        await self._client.start_notify(
-            CHARACTERISTIC_FFF2, self._notification_handler
-        )
+        await self._client.start_notify(CHARACTERISTIC_FFF2, self._notification_handler)
         # FFF1 also has notify — log RAW only until meaning is verified
         try:
             await self._client.start_notify(
@@ -226,6 +262,98 @@ class KdyBLEAdapter:
                             exc_info=True,
                         )
                 await client.disconnect()
+
+    # commands
+    async def send_toggle_power(self) -> None:
+        """Toggle power. No explicit OFF — see PROTOCOL.md safety notes."""
+        await self._send_command(CMD_BYTE_POWER, CMD_VALUE_TOGGLE)
+
+    async def send_timer_up(self) -> None:
+        await self._send_command(CMD_BYTE_TIMER, CMD_VALUE_STEP_UP)
+
+    async def send_timer_down(self) -> None:
+        await self._send_command(CMD_BYTE_TIMER, CMD_VALUE_STEP_DOWN)
+
+    async def send_temp_up(self) -> None:
+        await self._send_command(CMD_BYTE_TARGET_TEMP, CMD_VALUE_STEP_UP)
+
+    async def send_temp_down(self) -> None:
+        await self._send_command(CMD_BYTE_TARGET_TEMP, CMD_VALUE_STEP_DOWN)
+
+    async def send_toggle_outside_light(self) -> None:
+        await self._send_command(CMD_BYTE_OUTSIDE_LIGHT, CMD_VALUE_TOGGLE)
+
+    async def send_toggle_inside_light(self) -> None:
+        await self._send_command(CMD_BYTE_INSIDE_LIGHT, CMD_VALUE_TOGGLE)
+
+    async def send_cycle_rgb(self) -> None:
+        await self._send_command(CMD_BYTE_RGB, CMD_VALUE_TOGGLE)
+
+    async def send_set_volume(self, volume: int) -> None:
+        """Set volume 1-20 (absolute — the one command that isn't a step)."""
+        await self._send_command(CMD_BYTE_VOLUME, volume)
+
+    async def send_toggle_fm(self) -> None:
+        await self._send_command(CMD_BYTE_FM, CMD_VALUE_TOGGLE)
+
+    async def send_toggle_audio_source(self) -> None:
+        """Swap between BT and USB audio source.
+
+        The app sends byte 16 (USB) if BT is currently on, else byte 15
+        (BT) — there is no independent on/off, only a swap.
+        """
+        byte_index = CMD_BYTE_USB if self._state.bt_on else CMD_BYTE_BT
+        await self._send_command(byte_index, CMD_VALUE_TOGGLE)
+
+    async def send_toggle_unit(self) -> None:
+        await self._send_command(CMD_BYTE_UNIT, CMD_VALUE_TOGGLE)
+
+    async def _send_command(self, byte_index: int, value: int) -> None:
+        """Send a single-byte command to the device."""
+        await self._ensure_connected()
+        await self._send_command_while_connected(byte_index, value)
+
+    async def _send_command_while_connected(self, byte_index: int, value: int) -> None:
+        """Send command to device while holding the operation lock."""
+        packet = build_command_packet(byte_index, value)
+        _LOGGER.debug("%s: Sending command %s", self.name, packet.hex())
+        if self._operation_lock.locked():
+            _LOGGER.debug(
+                "%s: Operation already in progress, waiting for it to complete",
+                self.name,
+            )
+        async with self._operation_lock:
+            try:
+                await self._send_command_locked(packet)
+            except BleakNotFoundError:
+                _LOGGER.exception("%s: device not found, no longer in range", self.name)
+                raise
+            except BLEAK_RETRY_EXCEPTIONS:
+                _LOGGER.debug("%s: communication failed", self.name, exc_info=True)
+                raise
+
+    @retry_bluetooth_connection_error(DEFAULT_ATTEMPTS)
+    async def _send_command_locked(self, packet: bytes) -> None:
+        """Write a command packet, disconnecting on error to allow retry."""
+        try:
+            if self._client is not None:
+                await self._client.write_gatt_char(
+                    CHARACTERISTIC_FFF1, data=packet, response=False
+                )
+        except BleakDBusError as ex:
+            await asyncio.sleep(BLEAK_BACKOFF_TIME)
+            _LOGGER.debug(
+                "%s: Backing off %ss; Disconnecting due to error: %s",
+                self.name,
+                BLEAK_BACKOFF_TIME,
+                ex,
+            )
+            await self._execute_disconnect()
+            raise
+        except BleakError as ex:
+            _LOGGER.debug("%s: Disconnecting due to error: %s", self.name, ex)
+            await self._execute_disconnect()
+            raise
 
     def register_callback(
         self, callback: Callable[[KdyState], None]

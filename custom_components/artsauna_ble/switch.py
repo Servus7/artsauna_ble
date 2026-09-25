@@ -38,6 +38,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .artsauna_ble import ArtsaunaBLEAdapter
 from .const import CONF_DEVICE_TYPE, DEVICE_TYPE_ARTSAUNA, DEVICE_TYPE_KDY, DOMAIN
 from .coordinator import ArtsaunaBLECoordinator
+from .kdy_ble import KdyBLEAdapter
 from .models import ArtsaunaBLEData
 
 _LOGGER = logging.getLogger(__name__)
@@ -85,6 +86,12 @@ SWITCH_ENTITY_DESCRIPTIONS = [
     UNIT_DESCRIPTION,
 ]
 
+KDY_SWITCH_ENTITY_DESCRIPTIONS = [
+    POWER_DESCRIPTION,
+    FM_DESCRIPTION,
+    UNIT_DESCRIPTION,
+]
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -92,11 +99,17 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the platform for ArtsaunaBLE."""
+    data: ArtsaunaBLEData = hass.data[DOMAIN][entry.entry_id]
+
     if entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_ARTSAUNA) == DEVICE_TYPE_KDY:
-        # Commands are not verified for KDY yet — no switches in phase 1
+        assert isinstance(data.device, KdyBLEAdapter)
+        entities = [
+            KdyBLESwitch(data.coordinator, data.device, entry.title, description)
+            for description in KDY_SWITCH_ENTITY_DESCRIPTIONS
+        ]
+        async_add_entities(entities)
         return
 
-    data: ArtsaunaBLEData = hass.data[DOMAIN][entry.entry_id]
     assert isinstance(data.device, ArtsaunaBLEAdapter)
 
     entities = [
@@ -223,3 +236,84 @@ class ArtsaunaBLESwitch(CoordinatorEntity[ArtsaunaBLECoordinator], SwitchEntity)
                     else "mdi:temperature-fahrenheit"
                 )
         return super().icon
+
+
+class KdyBLESwitch(CoordinatorEntity[ArtsaunaBLECoordinator], SwitchEntity):
+    """Switch for KDY Sauna BLE devices.
+
+    Every write is an unconditional hardware toggle (no explicit on/off —
+    see PROTOCOL.md safety notes), so turn_on/turn_off only send the toggle
+    when the current status actually differs from the desired state.
+    """
+
+    _attr_has_entity_name = True
+    _attr_device_class = SwitchDeviceClass.SWITCH
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_entity_registry_enabled_default = True
+    _attr_entity_registry_visible_default = True
+
+    def __init__(
+        self,
+        coordinator: ArtsaunaBLECoordinator,
+        device: KdyBLEAdapter,
+        name: str,
+        description: SwitchEntityDescription,
+    ) -> None:
+        """Initialize the switch."""
+        super().__init__(coordinator)
+        self._coordinator = coordinator
+        self.entity_description = description
+        self._key = description.key
+        self._device = device
+        self._attr_unique_id = f"{device.address}_{self._key}"
+        self._attr_device_info = DeviceInfo(
+            name=name,
+            connections={(device_registry.CONNECTION_BLUETOOTH, device.address)},
+            manufacturer="KDY",
+            model="KDYSauna",
+        )
+        self._attr_is_on = False
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        match self._key:
+            case "power":
+                self._attr_is_on = self._device.is_power_on
+            case "fm":
+                self._attr_is_on = self._device.is_fm_on
+            case "unit":
+                self._attr_is_on = self._device.is_unit_celsius
+            case _:
+                _LOGGER.error("Wrong KEY for KDY switch: %s", self._key)
+                return
+        self.async_write_ha_state()
+
+    async def _set_state(self, desired_on: bool) -> None:
+        """Send the toggle only if the current status differs from desired."""
+        match self._key:
+            case "power":
+                if self._device.is_power_on != desired_on:
+                    await self._device.send_toggle_power()
+            case "fm":
+                if self._device.is_fm_on != desired_on:
+                    await self._device.send_toggle_fm()
+            case "unit":
+                if self._device.is_unit_celsius != desired_on:
+                    await self._device.send_toggle_unit()
+            case _:
+                _LOGGER.error("Wrong KEY for KDY switch: %s", self._key)
+                return
+        self._attr_is_on = desired_on
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        await self._set_state(True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        await self._set_state(False)
+
+    @property
+    def available(self) -> bool:
+        if self._key == "power":
+            return super().available
+        return super().available and self._device.is_power_on
