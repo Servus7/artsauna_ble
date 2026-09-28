@@ -304,32 +304,77 @@ class KdyBLEAdapter:
         step_up: Callable[[], Awaitable[None]],
         step_down: Callable[[], Awaitable[None]],
         target: int,
-        step_delay: float = 0.4,
+        step_timeout: float = 2.0,
         max_steps: int = 60,
+        max_stalled_steps: int = 3,
     ) -> None:
         """Fake an absolute set by repeating relative step commands.
 
         Step size per command is UNCONFIRMED (PROTOCOL.md). This re-reads
         the status after every single step and stops as soon as the target
-        is reached/passed, or as soon as a step produces no observed change
-        (dropped/coalesced command), rather than blindly firing `target -
-        current` commands up front and risking overshoot.
+        is reached/passed, rather than blindly firing `target - current`
+        commands up front and risking overshoot.
+
+        Each step waits (up to `step_timeout`) for an actual status
+        notification confirming the change, instead of a fixed sleep — BLE
+        notification latency can exceed a short fixed delay, which would
+        otherwise be mistaken for a dropped command and abort the walk to
+        target after a single step. Only after `max_stalled_steps`
+        consecutive steps produce no observed change do we give up, since a
+        single stalled step read alone doesn't tell dropped-command apart
+        from slow-but-pending notification.
         """
+        stalled_steps = 0
         for _ in range(max_steps):
             current = current_getter()
             if current == target:
                 return
             await (step_up() if current < target else step_down())
-            await asyncio.sleep(step_delay)
-            new_current = current_getter()
-            if new_current == current:
+            changed = await self._wait_for_state_change(
+                current_getter, current, step_timeout
+            )
+            if not changed:
+                stalled_steps += 1
                 _LOGGER.debug(
-                    "%s: no observed change after step command, stopping", self.name
+                    "%s: no observed change after step command (%s/%s)",
+                    self.name,
+                    stalled_steps,
+                    max_stalled_steps,
                 )
-                return
+                if stalled_steps >= max_stalled_steps:
+                    _LOGGER.debug(
+                        "%s: giving up stepping toward target after repeated"
+                        " no-op steps",
+                        self.name,
+                    )
+                    return
+                continue
+            stalled_steps = 0
+            new_current = current_getter()
             if (current < target < new_current) or (new_current < target < current):
                 _LOGGER.debug("%s: overshot target while stepping", self.name)
                 return
+
+    async def _wait_for_state_change(
+        self, current_getter: Callable[[], int], baseline: int, timeout: float
+    ) -> bool:
+        """Wait until `current_getter()` differs from `baseline` or timeout."""
+        if current_getter() != baseline:
+            return True
+        state_changed = asyncio.Event()
+
+        def _on_update(_state: KdyState) -> None:
+            if current_getter() != baseline:
+                state_changed.set()
+
+        unregister = self.register_callback(_on_update)
+        try:
+            await asyncio.wait_for(state_changed.wait(), timeout)
+            return True
+        except asyncio.TimeoutError:
+            return False
+        finally:
+            unregister()
 
     async def send_toggle_outside_light(self) -> None:
         await self._send_command(CMD_BYTE_OUTSIDE_LIGHT, CMD_VALUE_TOGGLE)

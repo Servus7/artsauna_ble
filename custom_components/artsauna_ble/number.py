@@ -67,6 +67,8 @@ KDY_VOLUME_DESCRIPTION = NumberEntityDescription(
 # There is no absolute-set command for these (PROTOCOL.md); the entity
 # fakes it by repeating relative up/down commands (see
 # KdyBLEAdapter._step_to_target). Not yet verified against real hardware.
+# The equivalent up/down buttons stay available alongside these number
+# entities as a fallback (see button.py KDY_BUTTON_ENTITY_DESCRIPTIONS).
 KDY_TARGET_TEMP_DESCRIPTION = NumberEntityDescription(
     key="target_temp",
     translation_key="target_temp",
