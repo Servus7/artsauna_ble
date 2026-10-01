@@ -18,16 +18,19 @@
 
 """Climate platform for Artsauna and KDY sauna BLE devices.
 
-Exposes on/off, current/target temperature, and remaining time. Temperature
-and timer are adjusted via the existing button entities (step-only BLE
-commands) — no climate setpoint slider.
+On/off maps to power. Target temperature uses BLE step commands under the
+hood (no absolute setpoint on the wire). Remaining time is an attribute;
+timer ± stays on the button entities.
 """
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from typing import Any
 
 from homeassistant.components.climate import (
+    ATTR_TEMPERATURE,
     ClimateEntity,
     ClimateEntityFeature,
     HVACAction,
@@ -47,7 +50,11 @@ from .coordinator import ArtsaunaBLECoordinator
 from .kdy_ble import KdyBLEAdapter
 from .models import ArtsaunaBLEData
 
+_LOGGER = logging.getLogger(__name__)
+
 ATTR_REMAINING_TIME = "remaining_time"
+_STEP_PAUSE_S = 0.35
+_MAX_TEMP_STEPS = 80
 
 
 async def async_setup_entry(
@@ -77,9 +84,12 @@ class _SaunaClimateBase(CoordinatorEntity[ArtsaunaBLECoordinator], ClimateEntity
 
     _attr_has_entity_name = True
     _attr_translation_key = "sauna"
+    # HEAT/OFF are the only HVAC modes that fit a sauna (HA has no An/Aus labels).
     _attr_hvac_modes = [HVACMode.OFF, HVACMode.HEAT]
     _attr_supported_features = (
-        ClimateEntityFeature.TURN_ON | ClimateEntityFeature.TURN_OFF
+        ClimateEntityFeature.TARGET_TEMPERATURE
+        | ClimateEntityFeature.TURN_ON
+        | ClimateEntityFeature.TURN_OFF
     )
     _attr_min_temp = 30
     _attr_max_temp = 110
@@ -111,6 +121,7 @@ class _SaunaClimateBase(CoordinatorEntity[ArtsaunaBLECoordinator], ClimateEntity
         self._attr_current_temperature = None
         self._attr_target_temperature = None
         self._remaining_time = 0
+        self._temp_task: asyncio.Task[None] | None = None
 
     @property
     def temperature_unit(self) -> str:
@@ -130,9 +141,11 @@ class _SaunaClimateBase(CoordinatorEntity[ArtsaunaBLECoordinator], ClimateEntity
         if hvac_mode == HVACMode.HEAT:
             await self._set_power(True)
             self._attr_hvac_mode = HVACMode.HEAT
+            self._attr_hvac_action = HVACAction.IDLE
         elif hvac_mode == HVACMode.OFF:
             await self._set_power(False)
             self._attr_hvac_mode = HVACMode.OFF
+            self._attr_hvac_action = HVACAction.OFF
         else:
             return
         self.async_write_ha_state()
@@ -143,16 +156,57 @@ class _SaunaClimateBase(CoordinatorEntity[ArtsaunaBLECoordinator], ClimateEntity
     async def async_turn_off(self) -> None:
         await self.async_set_hvac_mode(HVACMode.OFF)
 
+    async def async_set_temperature(self, **kwargs: Any) -> None:
+        temperature = kwargs.get(ATTR_TEMPERATURE)
+        if temperature is None:
+            return
+        desired = int(round(float(temperature)))
+        desired = max(int(self.min_temp), min(int(self.max_temp), desired))
+        self._attr_target_temperature = float(desired)
+        self.async_write_ha_state()
+
+        if self._temp_task and not self._temp_task.done():
+            self._temp_task.cancel()
+        self._temp_task = self.hass.async_create_task(
+            self._step_to_temperature(desired)
+        )
+
+    async def _step_to_temperature(self, desired: int) -> None:
+        """Send temp ± until device target matches desired (BLE is step-only)."""
+        try:
+            for _ in range(_MAX_TEMP_STEPS):
+                current = int(self._device.target_temp)
+                if current == desired:
+                    return
+                if current < desired:
+                    await self._device.send_temp_up()
+                else:
+                    await self._device.send_temp_down()
+                await asyncio.sleep(_STEP_PAUSE_S)
+            _LOGGER.warning(
+                "%s: stopped stepping toward %s after %s steps (now %s)",
+                self.name,
+                desired,
+                _MAX_TEMP_STEPS,
+                self._device.target_temp,
+            )
+        except asyncio.CancelledError:
+            raise
+
     async def _set_power(self, desired_on: bool) -> None:
         if self._device.is_power_on != desired_on:
             await self._device.send_toggle_power()
 
     def _apply_common_state(self) -> None:
         self._attr_current_temperature = float(self._device.current_temp)
-        self._attr_target_temperature = float(self._device.target_temp)
+        # Keep optimistic target while a step task is running
+        if not (self._temp_task and not self._temp_task.done()):
+            self._attr_target_temperature = float(self._device.target_temp)
         self._remaining_time = int(self._device.remaining_time)
         if self._device.is_power_on:
             self._attr_hvac_mode = HVACMode.HEAT
+            # IDLE (not HEATING) avoids duplicating the HEAT mode label in the UI
+            self._attr_hvac_action = HVACAction.IDLE
         else:
             self._attr_hvac_mode = HVACMode.OFF
             self._attr_hvac_action = HVACAction.OFF
@@ -179,12 +233,6 @@ class ArtsaunaBLEClimate(_SaunaClimateBase):
     @callback
     def _handle_coordinator_update(self) -> None:
         self._apply_common_state()
-        if self._device.is_power_on:
-            self._attr_hvac_action = (
-                HVACAction.HEATING
-                if self._device.is_heating_on
-                else HVACAction.IDLE
-            )
         self.async_write_ha_state()
 
 
@@ -209,6 +257,4 @@ class KdyBLEClimate(_SaunaClimateBase):
     @callback
     def _handle_coordinator_update(self) -> None:
         self._apply_common_state()
-        if self._device.is_power_on:
-            self._attr_hvac_action = HVACAction.HEATING
         self.async_write_ha_state()
