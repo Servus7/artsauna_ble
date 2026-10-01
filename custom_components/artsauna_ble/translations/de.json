@@ -20,6 +20,11 @@
     }
   },
   "entity": {
+    "climate": {
+      "sauna": {
+        "name": "Sauna"
+      }
+    },
     "button": {
       "temp_up": {
         "name": "Temperatur +"

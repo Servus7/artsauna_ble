@@ -46,6 +46,7 @@ from .kdy_ble import KdyBLEAdapter
 from .models import ArtsaunaBLEData
 
 PLATFORMS: list[Platform] = [
+    Platform.CLIMATE,
     Platform.SENSOR,
     Platform.SWITCH,
     # Platform.SELECT,
