@@ -92,7 +92,7 @@ class _SaunaClimateBase(CoordinatorEntity[ArtsaunaBLECoordinator], ClimateEntity
         | ClimateEntityFeature.TURN_OFF
     )
     _attr_min_temp = 30
-    _attr_max_temp = 110
+    _attr_max_temp = 60
     _attr_target_temperature_step = 1
     _attr_entity_registry_enabled_default = True
     _attr_entity_registry_visible_default = True
@@ -141,7 +141,8 @@ class _SaunaClimateBase(CoordinatorEntity[ArtsaunaBLECoordinator], ClimateEntity
         if hvac_mode == HVACMode.HEAT:
             await self._set_power(True)
             self._attr_hvac_mode = HVACMode.HEAT
-            self._attr_hvac_action = HVACAction.IDLE
+            # No hvac_action while on — avoids a second center label next to HEAT
+            self._attr_hvac_action = None
         elif hvac_mode == HVACMode.OFF:
             await self._set_power(False)
             self._attr_hvac_mode = HVACMode.OFF
@@ -205,8 +206,8 @@ class _SaunaClimateBase(CoordinatorEntity[ArtsaunaBLECoordinator], ClimateEntity
         self._remaining_time = int(self._device.remaining_time)
         if self._device.is_power_on:
             self._attr_hvac_mode = HVACMode.HEAT
-            # IDLE (not HEATING) avoids duplicating the HEAT mode label in the UI
-            self._attr_hvac_action = HVACAction.IDLE
+            # Omit action so the UI shows HEAT ("Heizbetrieb") only once
+            self._attr_hvac_action = None
         else:
             self._attr_hvac_mode = HVACMode.OFF
             self._attr_hvac_action = HVACAction.OFF
