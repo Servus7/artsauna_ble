@@ -70,6 +70,7 @@ SEARCH_FM_DESCRIPTION = ButtonEntityDescription(
     key="search_fm",
     icon="mdi:radio",
     translation_key="search_fm",
+    entity_category=EntityCategory.CONFIG,
 )
 CYCLE_RGB_DESCRIPTION = ButtonEntityDescription(
     key="cycle_rgb",
@@ -145,7 +146,6 @@ class ArtsaunaBLEButton(CoordinatorEntity[ArtsaunaBLECoordinator], ButtonEntity)
 
     _attr_has_entity_name = True
     _attr_device_class = ButtonDeviceClass.UPDATE
-    _attr_entity_category = EntityCategory.CONFIG
     _attr_entity_registry_enabled_default = True
     _attr_entity_registry_visible_default = True
 
@@ -205,7 +205,6 @@ class KdyBLEButton(CoordinatorEntity[ArtsaunaBLECoordinator], ButtonEntity):
 
     _attr_has_entity_name = True
     _attr_device_class = ButtonDeviceClass.UPDATE
-    _attr_entity_category = EntityCategory.CONFIG
     _attr_entity_registry_enabled_default = True
     _attr_entity_registry_visible_default = True
 

@@ -27,7 +27,6 @@ from homeassistant.components.number import (
     NumberMode,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -46,7 +45,6 @@ _LOGGER = logging.getLogger(__name__)
 VOLUME_DESCRIPTION = NumberEntityDescription(
     key="volume",
     translation_key="volume",
-    entity_category=EntityCategory.CONFIG,
     device_class=NumberDeviceClass.SOUND_PRESSURE,
     mode=NumberMode.SLIDER,
     native_min_value=0,
@@ -56,7 +54,6 @@ VOLUME_DESCRIPTION = NumberEntityDescription(
 KDY_VOLUME_DESCRIPTION = NumberEntityDescription(
     key="volume",
     translation_key="volume",
-    entity_category=EntityCategory.CONFIG,
     device_class=NumberDeviceClass.SOUND_PRESSURE,
     mode=NumberMode.SLIDER,
     native_min_value=1,

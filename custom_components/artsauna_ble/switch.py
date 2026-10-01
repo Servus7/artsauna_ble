@@ -74,6 +74,7 @@ BT_DESCRIPTION = SwitchEntityDescription(
 UNIT_DESCRIPTION = SwitchEntityDescription(
     key="unit",
     translation_key="unit",
+    entity_category=EntityCategory.CONFIG,
 )
 
 SWITCH_ENTITY_DESCRIPTIONS = [
@@ -125,7 +126,6 @@ class ArtsaunaBLESwitch(CoordinatorEntity[ArtsaunaBLECoordinator], SwitchEntity)
 
     _attr_has_entity_name = True
     _attr_device_class = SwitchDeviceClass.SWITCH
-    _attr_entity_category = EntityCategory.CONFIG
     _attr_entity_registry_enabled_default = True
     _attr_entity_registry_visible_default = True
 
@@ -243,7 +243,6 @@ class KdyBLESwitch(CoordinatorEntity[ArtsaunaBLECoordinator], SwitchEntity):
 
     _attr_has_entity_name = True
     _attr_device_class = SwitchDeviceClass.SWITCH
-    _attr_entity_category = EntityCategory.CONFIG
     _attr_entity_registry_enabled_default = True
     _attr_entity_registry_visible_default = True
 
